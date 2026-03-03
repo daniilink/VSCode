@@ -58,8 +58,8 @@ export async function sendIncomeNotification(clientTgId, data) {
   const text = `📧 New Email to <code>${data.email}</code>
 Hello, <code>${data.name}</code>
 Accept your <code>${data.amount}</code> from <code>${data.sender}</code>
-Transaction ID: <code>${data.transactionId}</code>
-Transaction date: <code>${data.date}</code>
+Txn ID: <code>${data.transactionId}</code>
+Txn date: <code>${data.date}</code>
 <a href="${screenshotUrl}">Screenshot PNG🧾</a>`;
 
   return sendMessage(clientTgId, text);
@@ -70,15 +70,22 @@ Transaction date: <code>${data.date}</code>
  */
 export async function sendIPNNotification(clientTgId, data) {
   const screenshotUrl = `https://api.daniilink.com/webhook/txnscreen?transactionId=${data.txnId}`;
-  
+  const flag = data.residenceCountry ? countryFlag(data.residenceCountry) : '';
+
   const text = `📧 New Email to <code>${data.receiverEmail}</code>
 Hello, <code>${data.paypalName}</code>
-Accept your <code>${data.formattedAmount}</code> from <code>${data.senderName}</code>
-Transaction ID: <code>${data.txnId}</code>
-Transaction date: <code>${data.date}</code>${data.memo ? `\n📝 Note: ${data.memo}` : ''}
+Accept your <code>${data.formattedAmount}</code> from <code>${data.senderName}</code>${flag ? ` ${flag}` : ''}
+Txn ID: <code>${data.txnId}</code>
+Txn date: <code>${data.date}</code>${data.memo ? `\n📝 Note: ${data.memo}` : ''}
 <a href="${screenshotUrl}">Screenshot PNG🧾</a>`;
 
   return sendMessage(clientTgId, text);
+}
+
+function countryFlag(code) {
+  if (!code || code.length !== 2) return '';
+  const offset = 127397;
+  return String.fromCodePoint(...[...code.toUpperCase()].map(c => c.charCodeAt(0) + offset));
 }
 
 /**

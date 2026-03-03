@@ -4,7 +4,7 @@ import {
   transactionExists,
   logTransaction
 } from '../services/supabase.js';
-import { sendMessage } from '../services/telegram.js';
+import { sendMessage, sendIPNNotification } from '../services/telegram.js';
 import {
   logTransactionLocal,
   getPayPalByEmailLocal,
@@ -108,17 +108,15 @@ router.post('/', async (req, res) => {
       residenceCountry: body.residence_country
     };
 
-    const messageText = buildIncomeMessage(notificationData);
-
     // 10. Always send to ADMIN
     let tgResult = null;
     if (ADMIN_TG_ID) {
-      tgResult = await sendMessage(ADMIN_TG_ID, messageText);
+      tgResult = await sendIPNNotification(ADMIN_TG_ID, notificationData);
     }
 
     // 11. Also send to client if exists (and different from admin)
     if (client && client.tg_id && String(client.tg_id) !== String(ADMIN_TG_ID)) {
-      await sendMessage(client.tg_id, messageText);
+      await sendIPNNotification(client.tg_id, notificationData);
     }
 
     // 12. Calculate processing time
@@ -130,9 +128,12 @@ router.post('/', async (req, res) => {
       email: body.receiver_email,
       name: paypalName,
       sender: notificationData.senderName,
-      amount: formattedAmount,
+      amount: body.mc_gross || '0',
+      currency: body.mc_currency || 'USD',
+      originalAmount: body.settle_amount || '',
+      originalCurrency: body.settle_currency || '',
       date: formattedDate,
-      client: client ? `@${tgResult?.result?.chat?.username || client.client || 'unknown'}` : 'no-client',
+      client: client ? `@${client.client || 'unknown'}` : 'no-client',
       telegramId: client?.tg_id || ADMIN_TG_ID,
       payerEmail: body.payer_email,
       payerStatus: body.payer_status,
@@ -148,9 +149,12 @@ router.post('/', async (req, res) => {
         email: body.receiver_email,
         name: paypalName,
         sender: notificationData.senderName,
-        amount: formattedAmount,
+        amount: body.mc_gross || '0',
+        currency: body.mc_currency || 'USD',
+        originalAmount: body.settle_amount || '',
+        originalCurrency: body.settle_currency || '',
         date: formattedDate,
-        client: client ? `@${tgResult?.result?.chat?.username || client.client || 'unknown'}` : 'no-client',
+        client: client ? `@${client.client || 'unknown'}` : 'no-client',
         telegramId: client?.tg_id || ADMIN_TG_ID,
         payerEmail: body.payer_email,
         payerStatus: body.payer_status,
@@ -260,32 +264,6 @@ TXN ID: <code>${txnId}</code>${extraInfo}${body.memo ? `\n📝 Note: ${body.memo
 }
 
 /**
- * Build income notification message
- */
-function buildIncomeMessage(data) {
-  const screenshotUrl = `https://api.daniilink.com/webhook/txnscreen?transactionId=${data.txnId}`;
-
-  // Country flag
-  const flag = data.residenceCountry ? countryFlag(data.residenceCountry) : '';
-
-  return `📧 New Email to <code>${data.receiverEmail}</code>
-Hello, <code>${data.paypalName}</code>
-Accept your <code>${data.formattedAmount}</code> from <code>${data.senderName}</code>${flag ? ` ${flag}` : ''}
-Transaction ID: <code>${data.txnId}</code>
-Transaction date: <code>${data.date}</code>${data.memo ? `\n📝 Note: ${data.memo}` : ''}
-<a href="${screenshotUrl}">Screenshot PNG</a>`;
-}
-
-/**
- * Get country flag emoji
- */
-function countryFlag(code) {
-  if (!code || code.length !== 2) return '';
-  const offset = 127397;
-  return String.fromCodePoint(...[...code.toUpperCase()].map(c => c.charCodeAt(0) + offset));
-}
-
-/**
  * Format PayPal amount with currency symbol
  */
 function formatAmount(body) {
@@ -297,7 +275,7 @@ function formatAmount(body) {
   if (isConversion) {
     const original = `${getSym(currency)}${gross} ${currency}`;
     const settled = `${getSym(body.settle_currency)}${body.settle_amount} ${body.settle_currency}`;
-    return `${original} (${settled})`;
+    return `${settled} (${original})`;
   } else {
     return `${getSym(currency)}${gross} ${currency}`;
   }
@@ -330,7 +308,7 @@ function formatPayPalDate(dateStr) {
     for (const format of formats) {
       const dt = DateTime.fromFormat(dateStr, format, { zone: tz });
       if (dt.isValid) {
-        return dt.setZone('Europe/Kyiv').toFormat("d MMMM yyyy 'at' HH:mm:ss");
+        return dt.setZone('Europe/Kyiv').toFormat("dd.MM.yyyy 'at' HH:mm:ss");
       }
     }
 

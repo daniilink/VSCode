@@ -821,7 +821,7 @@
         <input class="calc-input" type="number" id="receiveAmount" placeholder="87" readonly style="color:var(--green)">
       </div>
       <div class="calc-currency" id="receiveCurrency">
-        <img src="https://cryptologos.cc/logos/tether-usdt-logo.png" alt="USDT" id="receiveCurrencyImg">
+        <img src="/img/usdt.png" alt="USDT" id="receiveCurrencyImg">
         <span id="receiveCurrencyText">USDT</span>
       </div>
     </div>
@@ -837,14 +837,14 @@
       <div class="payout-options">
         <div class="payout-option selected" data-method="usdt" onclick="selectPayout(this)">
           <div class="payout-icon">
-            <img src="https://cryptologos.cc/logos/tether-usdt-logo.png" alt="USDT">
+            <img src="/img/usdt.png" alt="USDT">
           </div>
           <div class="payout-name">USDT</div>
           <div class="payout-desc">TRC20 / ERC20 / BEP20</div>
         </div>
         <div class="payout-option" data-method="binance" onclick="selectPayout(this)">
           <div class="payout-icon">
-            <img src="https://cryptologos.cc/logos/binance-coin-bnb-logo.png" alt="Binance">
+            <img src="/img/bnb.png" alt="Binance">
           </div>
           <div class="payout-name">Binance Pay</div>
           <div class="payout-desc" data-i18n="binanceDesc">Instant to Binance</div>
@@ -973,7 +973,7 @@
     <div class="step">
       <div class="step-num">03</div>
       <div class="step-icon green">
-        <img src="https://cryptologos.cc/logos/tether-usdt-logo.png" alt="USDT">
+        <img src="/img/usdt.png" alt="USDT">
       </div>
       <h3 data-i18n="step3Title">Receive Crypto</h3>
       <p data-i18n="step3Desc">After PayPal is confirmed, we send USDT or Binance Pay. Usually 10–15 min.</p>
@@ -1169,7 +1169,7 @@
 <footer>
   <a class="logo" href="#">
     <div class="logo-icon">
-      <img src="https://cryptologos.cc/logos/tether-usdt-logo.png" alt="USDT">
+      <img src="/img/usdt.png" alt="USDT">
     </div>
     PP Exchange
   </a>
@@ -1577,13 +1577,13 @@ function selectPayout(el) {
     cryptoSelect.value = 'Binance Pay';
     walletLabel.textContent = t.labelWalletBinance;
     walletInput.placeholder = 'Binance Pay ID or email...';
-    document.getElementById('receiveCurrencyImg').src = 'https://cryptologos.cc/logos/binance-coin-bnb-logo.png';
+    document.getElementById('receiveCurrencyImg').src = '/img/bnb.png';
     document.getElementById('receiveCurrencyText').textContent = 'Binance';
   } else {
     cryptoSelect.value = 'USDT TRC20';
     walletLabel.textContent = t.labelWallet;
     walletInput.placeholder = 'T... or 0x...';
-    document.getElementById('receiveCurrencyImg').src = 'https://cryptologos.cc/logos/tether-usdt-logo.png';
+    document.getElementById('receiveCurrencyImg').src = '/img/usdt.png';
     document.getElementById('receiveCurrencyText').textContent = 'USDT';
   }
 }
@@ -1797,14 +1797,14 @@ document.getElementById('cryptoSelect').addEventListener('change', function() {
     document.querySelector('[data-method="binance"]').classList.add('selected', 'binance');
     walletLabel.textContent = t.labelWalletBinance;
     walletInput.placeholder = 'Binance Pay ID or email...';
-    document.getElementById('receiveCurrencyImg').src = 'https://cryptologos.cc/logos/binance-coin-bnb-logo.png';
+    document.getElementById('receiveCurrencyImg').src = '/img/bnb.png';
     document.getElementById('receiveCurrencyText').textContent = 'Binance';
   } else {
     selectedPayout = 'usdt';
     document.querySelector('[data-method="usdt"]').classList.add('selected');
     walletLabel.textContent = t.labelWallet;
     walletInput.placeholder = 'T... or 0x...';
-    document.getElementById('receiveCurrencyImg').src = 'https://cryptologos.cc/logos/tether-usdt-logo.png';
+    document.getElementById('receiveCurrencyImg').src = '/img/usdt.png';
     document.getElementById('receiveCurrencyText').textContent = 'USDT';
   }
 

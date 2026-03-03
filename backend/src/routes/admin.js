@@ -133,13 +133,6 @@ router.get('/search', auth, (req, res) => {
   res.json({ error: 'Provide email or txn parameter' });
 });
 
-// Country flag emoji
-function countryFlag(code) {
-  if (!code || code.length !== 2) return '';
-  const offset = 127397;
-  return String.fromCodePoint(...[...code.toUpperCase()].map(c => c.charCodeAt(0) + offset));
-}
-
 // Format processing time
 function formatTime(ms) {
   if (!ms) return '-';
@@ -152,7 +145,7 @@ function toKyivTime(dateStr) {
   if (!dateStr) return '-';
   const months = { Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5, Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11,
                    January:0, February:1, March:2, April:3, June:5, July:6, August:7, September:8, October:9, November:10, December:11 };
-  const fmt = (d) => d.toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const fmt = (d) => d.toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(',', ' at').replace('\u202f', ' ');
 
   try {
     // Format 1: "11:33:21 Feb 21, 2026 PST" (PayPal IPN)
@@ -195,31 +188,61 @@ function toKyivTime(dateStr) {
   }
 }
 
-// Format amount (remove duplicate currency)
+// Format amount for dashboard
+const CURRENCY_SYMBOLS = { USD: '$', EUR: '€', GBP: '£', CAD: 'C$', AUD: 'A$' };
 function formatAmount(amount, currency) {
-  if (!amount) return '-';
-  // Remove currency code if already in amount
-  let cleanAmount = String(amount).replace(/\s*(USD|EUR|GBP|RUB|UAH|PLN|CZK|CAD|AUD|CHF|JPY)$/i, '').trim();
-  const symbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : currency === 'GBP' ? '£' : '';
-  return `${symbol}${cleanAmount}`;
+  if (!amount || amount === '0') return '-';
+  const str = String(amount).trim();
+  // Detect currency from string if not passed
+  const codeMatch = str.match(/\b(USD|EUR|GBP|RUB|UAH|PLN|CZK|CAD|AUD|CHF|JPY|NOK|SEK|DKK|HUF|ILS|TRY|CNY)\b/i);
+  const code = (currency || (codeMatch ? codeMatch[1].toUpperCase() : null));
+  // Strip any currency codes and symbols from amount string
+  const clean = str
+    .replace(/\s*(USD|EUR|GBP|RUB|UAH|PLN|CZK|CAD|AUD|CHF|JPY|NOK|SEK|DKK|HUF|ILS|TRY|CNY)\b/gi, '')
+    .replace(/^[$€£₽₴]/, '')
+    .trim();
+  const sym = CURRENCY_SYMBOLS[code] || '';
+  return `${sym}${clean}${sym ? '' : (code ? ' ' + code : '')}`;
 }
 
 // GET /admin/dashboard - Beautiful HTML dashboard
 router.get('/dashboard', auth, (req, res) => {
   const stats = getStats();
   const db = getDb();
-  // Sort by transaction date (newest first), parse PayPal date format
+  // Sort by transaction date (newest first), parse all date formats
   const recentTx = db.prepare('SELECT * FROM transactions ORDER BY id DESC').all()
     .sort((a, b) => {
       const parseDate = (d) => {
         if (!d) return 0;
-        // PayPal format: "11:33:21 Feb 21, 2026 PST"
-        const match = d.match(/(\d{1,2}):(\d{2}):(\d{2})\s+(\w+)\s+(\d{1,2}),\s+(\d{4})/);
-        if (match) {
-          const [, h, m, s, mon, day, year] = match;
-          const months = { Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5, Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11 };
-          return new Date(year, months[mon], day, h, m, s).getTime();
+        const months = { Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5, Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11,
+                         January:0, February:1, March:2, April:3, June:5, July:6, August:7, September:8, October:9, November:10, December:11 };
+
+        // Format 1: "11:33:21 Feb 21, 2026 PST" (PayPal IPN)
+        let m = d.match(/(\d{1,2}):(\d{2}):(\d{2})\s+(\w+)\s+(\d{1,2}),\s+(\d{4})\s+(PST|PDT)/);
+        if (m) {
+          const [h, min, s] = m[1].split(':').map(Number);
+          const offset = m[7] === 'PST' ? 8 : 7;
+          return new Date(Date.UTC(+m[6], months[m[4]], +m[5], h + offset, min, s)).getTime();
         }
+
+        // Format 2: "20 February 2026 at 19:48:18" (n8n/Supabase)
+        m = d.match(/(\d{1,2})\s+(\w+)\s+(\d{4})\s+at\s+(\d{1,2}):(\d{2}):(\d{2})/);
+        if (m) {
+          return new Date(+m[3], months[m[2]], +m[1], +m[4], +m[5], +m[6]).getTime();
+        }
+
+        // Format 3: "23.02.2026 at 00:34:54" (mixed, 4-digit year)
+        m = d.match(/(\d{2})\.(\d{2})\.(\d{4})\s+at\s+(\d{2}):(\d{2}):(\d{2})/);
+        if (m) {
+          return new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5], +m[6]).getTime();
+        }
+
+        // Format 5: "23.02.2026, 00:34"
+        m = d.match(/(\d{2})\.(\d{2})\.(\d{4}),?\s+(\d{2}):(\d{2})/);
+        if (m) {
+          return new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5]).getTime();
+        }
+
         return new Date(d).getTime() || 0;
       };
       return parseDate(b.date) - parseDate(a.date);
@@ -335,10 +358,9 @@ router.get('/dashboard', auth, (req, res) => {
               <td class="muted">${toKyivTime(tx.date)}</td>
               <td>${tx.sender || '-'}</td>
               <td>
-                <div class="amount">${formatAmount(tx.amount, tx.currency)}</div>
-                ${hasConversion ? `<div class="converted">${formatAmount(tx.original_amount, tx.original_currency)} @ ${tx.exchange_rate || '?'}</div>` : ''}
+                <div class="amount">${formatAmount(tx.amount, tx.currency)}${hasConversion ? ` <span style="color:var(--muted);font-size:0.85em">(${formatAmount(tx.original_amount, tx.original_currency)})</span>` : ''}</div>
               </td>
-              <td><span class="flag">${countryFlag(tx.residence_country)}</span>${tx.residence_country || '-'}</td>
+              <td>${tx.residence_country ? `<img src="https://flagcdn.com/16x12/${tx.residence_country.toLowerCase()}.png" width="16" height="12" alt="${tx.residence_country}" title="${tx.residence_country}" style="margin-right:4px;vertical-align:middle">` : ''}${tx.residence_country || '-'}</td>
               <td class="mono muted hide-mobile">${tx.payer_email || '-'}</td>
               <td>
                 <div class="cell-badges">
