@@ -37,9 +37,17 @@ CREATE TABLE IF NOT EXISTS transactions (
   name TEXT,
   sender TEXT,
   amount TEXT,
+  currency TEXT,
+  original_amount TEXT,
+  original_currency TEXT,
   date TEXT,
   client TEXT,
   telegram_id BIGINT,
+  payer_email TEXT,
+  payer_status TEXT,
+  residence_country TEXT,
+  protection_eligibility TEXT,
+  memo TEXT,
   time_to_proceed TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
