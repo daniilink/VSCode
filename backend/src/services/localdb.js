@@ -346,7 +346,7 @@ export function syncTransactionsFromSupabase(supabaseTransactions) {
         amount: tx.amount || '',
         date: tx.date || '',
         client: tx.client || '',
-        telegram_id: tx.telegram_id || '',
+        telegram_id: tx.telegram_id ? String(tx.telegram_id) : '',
         time_to_proceed: tx.time_to_proceed || '',
         payer_email: tx.payer_email || '',
         payer_status: tx.payer_status || '',
