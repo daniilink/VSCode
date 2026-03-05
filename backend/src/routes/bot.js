@@ -145,7 +145,7 @@ async function handleCallback(cb) {
           );
         } else {
           await sendMessage(chatId,
-            `✅ <b>All clear! You can send.</b>\n\n` +
+            `👌 <b>All clear! You can send.</b>\n\n` +
             `No issues detected on PayPal.\n` +
             `<b>${session.ppName}</b> · <code>${session.ppEmail}</code>`
           );
