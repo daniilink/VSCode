@@ -54,7 +54,7 @@ async function handleMessage(msg) {
 
   // Build inline keyboard — 1 button per row (email is unique key)
   const keyboard = paypals.map(pp => ([{
-    text: `${pp.name}  ·  ${pp.email}`,
+    text: pp.name ? `${pp.name}  ·  ${pp.email}` : pp.email,
     callback_data: `pp:${pp.email}`
   }]));
 
@@ -90,7 +90,7 @@ async function handleCallback(cb) {
     });
 
     await editMessageText(chatId, msgId,
-      `✅ <b>${pp.name}</b>\n<code>${pp.email}</code>\n\n` +
+      `✅ <b>${pp.name || pp.email}</b>\n<code>${pp.email}</code>\n\n` +
       `Open PayPal and start the send.\n` +
       `When you <b>see the fees</b> on the confirmation screen — press the button below.`,
       {
