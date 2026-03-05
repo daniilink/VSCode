@@ -5,6 +5,8 @@ import { checkGmailStatus } from '../services/gmail.js';
 
 const router = Router();
 
+const ADMIN_TG_ID = '472124645';
+
 // Active check sessions: tgId → { ppEmail, ppName, createdAt }
 const pendingSessions = new Map();
 
@@ -36,9 +38,10 @@ async function handleMessage(msg) {
 
   if (text !== '/send') return;
 
-  // Only known clients
+  // Only known clients (admin always allowed)
+  const isAdmin = tgId === ADMIN_TG_ID;
   const client = findClientByTgIdLocal(tgId);
-  if (!client) return;
+  if (!client && !isAdmin) return;
 
   // Clear any old session
   pendingSessions.delete(tgId);
@@ -55,8 +58,9 @@ async function handleMessage(msg) {
     callback_data: `pp:${pp.email}`
   }]));
 
+  const displayName = client?.client || '@daniilink';
   await sendMessage(tgId,
-    `👋 ${client.client}, select the PayPal you want to send to:`,
+    `👋 ${displayName}, select the PayPal you want to send to:`,
     { reply_markup: { inline_keyboard: keyboard } }
   );
 }
@@ -138,12 +142,6 @@ async function handleCallback(cb) {
             `⚠️ <b>Hold on, don't send!</b>\n\n` +
             `PayPal requires action on the account.\n` +
             `Wait until the issue is resolved.`
-          );
-        } else if (status.delay) {
-          await sendMessage(chatId,
-            `⏳ <b>Possible delay!</b>\n\n` +
-            `Payment may be held for up to 24h after sending.\n` +
-            `You can send, but warn your recipient about the delay.`
           );
         } else {
           await sendMessage(chatId,
