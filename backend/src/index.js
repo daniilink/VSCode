@@ -176,10 +176,9 @@ server = app.listen(PORT, () => {
     .then(r => r.json())
     .then(r => console.log(`Bot webhook: ${r.ok ? '✅' : '❌'} ${botWebhookUrl}`))
     .catch(e => console.error('Bot webhook error:', e.message));
-  fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ commands: [{ command: 'send', description: 'Select PayPal and check status before sending' }] })
+  // Clear global commands (visible only per-client, set during UpdateClients sync)
+  fetch(`https://api.telegram.org/bot${botToken}/deleteMyCommands`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
   }).catch(() => {});
   console.log(`Endpoints:`);
   console.log(`  POST /webhook/pp-exchange     - Form submission`);

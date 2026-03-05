@@ -69,6 +69,20 @@ router.post('/UpdateClients', async (req, res) => {
 
     console.log('Clients synced:', result.synced, '(Supabase + SQLite)');
 
+    // Set /send command visible only for known clients
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    const sendCommand = [{ command: 'send', description: 'Check PayPal status before sending' }];
+    await Promise.all(clientsData.map(c =>
+      fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commands: sendCommand,
+          scope: { type: 'chat', chat_id: Number(c.Tg_ID) }
+        })
+      }).catch(() => {})
+    ));
+
   } catch (error) {
     console.error('Clients sync error:', error);
   }
