@@ -107,3 +107,42 @@ function parseEmailData(message) {
     snippet: message.snippet
   };
 }
+
+/**
+ * Check all Gmail accounts for recent PayPal issue emails (last 1 hour)
+ * Returns { ban: bool, action: bool, delay: bool }
+ */
+export async function checkGmailStatus() {
+  const tokens = [
+    process.env.GMAIL_REFRESH_TOKEN_1,
+    process.env.GMAIL_REFRESH_TOKEN_2,
+    process.env.GMAIL_REFRESH_TOKEN_3
+  ].filter(Boolean);
+
+  const result = { ban: false, action: false, delay: false };
+
+  await Promise.all(tokens.map(async (token) => {
+    try {
+      const auth = new google.auth.OAuth2(
+        process.env.GMAIL_CLIENT_ID,
+        process.env.GMAIL_CLIENT_SECRET
+      );
+      auth.setCredentials({ refresh_token: token });
+      const gmail = google.gmail({ version: 'v1', auth });
+
+      const [banRes, actionRes, delayRes] = await Promise.all([
+        gmail.users.messages.list({ userId: 'me', q: 'label:banpp newer_than:1h', maxResults: 1 }),
+        gmail.users.messages.list({ userId: 'me', q: 'label:action newer_than:1h', maxResults: 1 }),
+        gmail.users.messages.list({ userId: 'me', q: '(label:delay OR label:delaywithdraw) newer_than:1h', maxResults: 1 })
+      ]);
+
+      if (banRes.data.messages?.length)    result.ban = true;
+      if (actionRes.data.messages?.length)  result.action = true;
+      if (delayRes.data.messages?.length)   result.delay = true;
+    } catch (err) {
+      console.error('Gmail status check error:', err.message);
+    }
+  }));
+
+  return result;
+}

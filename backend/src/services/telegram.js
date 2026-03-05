@@ -112,3 +112,33 @@ export async function sendErrorNotification(message) {
   const chatId = process.env.TELEGRAM_ERROR_CHAT_ID;
   return sendMessage(chatId, `⚠️ Error: ${message}`);
 }
+
+/**
+ * Edit existing bot message text
+ */
+export async function editMessageText(chatId, messageId, text, options = {}) {
+  const response = await fetch(`${BASE_URL}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+      ...options
+    })
+  });
+  return response.json();
+}
+
+/**
+ * Answer callback query (removes loading spinner on button)
+ */
+export async function answerCallbackQuery(callbackQueryId) {
+  await fetch(`${BASE_URL}/answerCallbackQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ callback_query_id: callbackQueryId })
+  });
+}

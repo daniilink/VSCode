@@ -28,21 +28,19 @@ export async function findClientByEmail(email) {
 }
 
 export async function syncClients(clientsData) {
-  // Delete all existing
-  await supabase.from('clients').delete().neq('id', 0);
-  
-  // Insert new
-  if (clientsData.length > 0) {
-    const { error } = await supabase.from('clients').insert(
-      clientsData.map(c => ({
-        tg_id: c.Tg_ID || c.tg_id,
-        client: c.Client || c.client,
-        emails: c.Emails || c.emails
-      }))
-    );
-    if (error) throw error;
-  }
-  
+  if (clientsData.length === 0) return { synced: 0 };
+
+  // Upsert: insert or update on tg_id conflict (no duplicates possible)
+  const { error } = await supabase.from('clients').upsert(
+    clientsData.map(c => ({
+      tg_id: c.Tg_ID || c.tg_id,
+      client: c.Client || c.client,
+      emails: c.Emails || c.emails
+    })),
+    { onConflict: 'tg_id' }
+  );
+  if (error) throw error;
+
   return { synced: clientsData.length };
 }
 

@@ -116,6 +116,11 @@ export function getClientsLocal() {
   return stmt.all();
 }
 
+export function findClientByTgIdLocal(tgId) {
+  const clients = getClientsLocal();
+  return clients.find(c => String(c.tg_id) === String(tgId)) || null;
+}
+
 export function findClientByEmailLocal(email) {
   const clients = getClientsLocal();
   return clients.find(c =>

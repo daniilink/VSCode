@@ -11,6 +11,7 @@ import ipnPaypalRouter from './routes/ipn-paypal.js';
 import screenshotsRouter from './routes/screenshots.js';
 import syncRouter from './routes/sync.js';
 import adminRouter from './routes/admin.js';
+import botRouter from './routes/bot.js';
 import {
   getStats,
   initDatabase,
@@ -62,6 +63,7 @@ app.use('/webhook/ipn-paypal', ipnPaypalRouter);        // PayPal IPN
 app.use('/webhook', screenshotsRouter);                 // Screenshot endpoints
 app.use('/webhook', syncRouter);                        // Sheets to DB sync
 app.use('/admin', adminRouter);                         // Admin dashboard
+app.use('/webhook/bot', botRouter);                     // Telegram bot
 
 // 404 handler
 app.use((req, res) => {
@@ -166,6 +168,13 @@ initDatabase();
 server = app.listen(PORT, () => {
   console.log(`PP Exchange Backend running on port ${PORT}`);
   scheduleBackup();
+
+  // Register Telegram bot webhook
+  const botWebhookUrl = `${process.env.BASE_URL}/webhook/bot`;
+  fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/setWebhook?url=${botWebhookUrl}`)
+    .then(r => r.json())
+    .then(r => console.log(`Bot webhook: ${r.ok ? '✅' : '❌'} ${botWebhookUrl}`))
+    .catch(e => console.error('Bot webhook error:', e.message));
   console.log(`Endpoints:`);
   console.log(`  POST /webhook/pp-exchange     - Form submission`);
   console.log(`  POST /webhook/ipn-paypal      - PayPal IPN`);
