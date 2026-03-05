@@ -36,6 +36,10 @@ async function handleMessage(msg) {
   const tgId = String(msg.from.id);
   const text  = (msg.text || '').trim();
 
+  // Only known clients (admin always allowed)
+  const isAdmin = tgId === ADMIN_TG_ID;
+  const client = findClientByTgIdLocal(tgId);
+
   if (text === '/start') {
     if (client || isAdmin) {
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -53,10 +57,6 @@ async function handleMessage(msg) {
   }
 
   if (text !== '/send') return;
-
-  // Only known clients (admin always allowed)
-  const isAdmin = tgId === ADMIN_TG_ID;
-  const client = findClientByTgIdLocal(tgId);
   if (!client && !isAdmin) return;
 
   // Clear any old session
