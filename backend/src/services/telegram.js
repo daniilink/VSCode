@@ -89,6 +89,23 @@ function countryFlag(code) {
 }
 
 /**
+ * Get Telegram username by chat ID
+ * Returns '@username' or null if user has no username
+ */
+export async function getTelegramUsername(tgId) {
+  try {
+    const response = await fetch(`${BASE_URL}/getChat?chat_id=${tgId}`);
+    const result = await response.json();
+    if (result.ok && result.result?.username) {
+      return `@${result.result.username}`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Send error notification to admin
  */
 export async function sendErrorNotification(message) {

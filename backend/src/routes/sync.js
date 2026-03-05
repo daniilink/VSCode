@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { google } from 'googleapis';
 import { syncClients, syncPayPals } from '../services/supabase.js';
 import { syncClientsLocal, syncPayPalsLocal } from '../services/localdb.js';
+import { getTelegramUsername } from '../services/telegram.js';
 
 const router = Router();
 
@@ -53,7 +54,13 @@ router.post('/UpdateClients', async (req, res) => {
       });
       return obj;
     }).filter(c => c.Tg_ID); // Only rows with Tg_ID
-    
+
+    // Enrich each client with real Telegram username
+    for (const c of clientsData) {
+      const username = await getTelegramUsername(c.Tg_ID);
+      c.Client = username || `@${c.Client}`;
+    }
+
     // Sync to Supabase
     const result = await syncClients(clientsData);
 
