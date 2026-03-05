@@ -171,10 +171,16 @@ server = app.listen(PORT, () => {
 
   // Register Telegram bot webhook
   const botWebhookUrl = `${process.env.BASE_URL}/webhook/bot`;
-  fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/setWebhook?url=${botWebhookUrl}`)
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  fetch(`https://api.telegram.org/bot${botToken}/setWebhook?url=${botWebhookUrl}`)
     .then(r => r.json())
     .then(r => console.log(`Bot webhook: ${r.ok ? '✅' : '❌'} ${botWebhookUrl}`))
     .catch(e => console.error('Bot webhook error:', e.message));
+  fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ commands: [{ command: 'send', description: 'Select PayPal and check status before sending' }] })
+  }).catch(() => {});
   console.log(`Endpoints:`);
   console.log(`  POST /webhook/pp-exchange     - Form submission`);
   console.log(`  POST /webhook/ipn-paypal      - PayPal IPN`);
