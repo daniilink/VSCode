@@ -36,6 +36,22 @@ async function handleMessage(msg) {
   const tgId = String(msg.from.id);
   const text  = (msg.text || '').trim();
 
+  if (text === '/start') {
+    if (client || isAdmin) {
+      const botToken = process.env.TELEGRAM_BOT_TOKEN;
+      await fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commands: [{ command: 'send', description: 'Check PayPal status before sending' }],
+          scope: { type: 'chat', chat_id: Number(tgId) }
+        })
+      }).catch(() => {});
+      await sendMessage(tgId, `👋 Welcome! Use /send to check PayPal status before sending.`);
+    }
+    return;
+  }
+
   if (text !== '/send') return;
 
   // Only known clients (admin always allowed)
