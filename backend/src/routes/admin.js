@@ -1,9 +1,31 @@
 import { Router } from 'express';
-import { getDb, getStats } from '../services/localdb.js';
-import { authMiddleware, handleLogin, handleLogout } from '../middleware/auth.js';
+import {
+  getDb, getStats,
+  getPasskeyCredentials, savePasskeyCredential, updatePasskeyCounter, deletePasskeyCredential,
+} from '../services/localdb.js';
+import { authMiddleware, handleLogin, handleLogout, generateToken } from '../middleware/auth.js';
 import { sendBackupToTelegram } from '../services/backup.js';
+import {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse,
+} from '@simplewebauthn/server';
 
 const router = Router();
+
+// ─────────────────────────────────────────────────────────────
+// WebAuthn config
+// ─────────────────────────────────────────────────────────────
+const BASE_URL  = process.env.BASE_URL || 'https://api.daniilink.com';
+const RP_ID     = new URL(BASE_URL).hostname;
+const RP_ORIGIN = BASE_URL;
+const RP_NAME   = 'PP Exchange Admin';
+
+// In-memory challenge store (one admin — one challenge at a time)
+let pendingRegChallenge  = null; // { challenge, expiry }
+let pendingAuthChallenge = null; // { challenge, expiry }
+const CHALLENGE_TTL = 5 * 60 * 1000; // 5 min
 
 // Root redirect to login/dashboard
 router.get('/', (req, res) => {
@@ -30,20 +52,32 @@ router.get('/login', (req, res) => {
     button{width:100%;padding:14px;background:var(--accent);border:none;border-radius:8px;color:white;font-size:1em;cursor:pointer;font-weight:500}
     button:hover{opacity:0.9}
     .error{color:var(--red);text-align:center;margin-bottom:15px;display:none}
+    .divider{display:flex;align-items:center;gap:10px;margin:15px 0;color:var(--muted);font-size:0.85em}
+    .divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--border)}
+    .passkey-btn{width:100%;padding:14px;background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:1em;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:border-color .2s}
+    .passkey-btn:hover{border-color:var(--accent)}
+    .passkey-btn:disabled{opacity:0.5;cursor:not-allowed}
   </style>
 </head>
 <body>
   <div class="card">
     <h1>🔐 Admin Login</h1>
-    <div class="error" id="error">Invalid password</div>
+    <div class="error" id="error"></div>
     <form id="form">
       <input type="password" name="password" placeholder="Password" required autofocus>
       <button type="submit">Login</button>
     </form>
+    <div class="divider">or</div>
+    <button class="passkey-btn" id="passkey-btn">🔑 Use Passkey (Face ID)</button>
   </div>
+  <script src="https://unpkg.com/@simplewebauthn/browser@13/dist/bundle/index.umd.min.js"></script>
   <script>
+    const errEl = document.getElementById('error');
+    function showError(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
+
     document.getElementById('form').onsubmit = async (e) => {
       e.preventDefault();
+      errEl.style.display = 'none';
       const password = e.target.password.value;
       const res = await fetch('/admin/login', {
         method: 'POST',
@@ -53,7 +87,39 @@ router.get('/login', (req, res) => {
       if (res.ok) {
         window.location.href = '/admin/dashboard';
       } else {
-        document.getElementById('error').style.display = 'block';
+        const data = await res.json().catch(() => ({}));
+        showError(data.error || 'Invalid password');
+      }
+    };
+
+    document.getElementById('passkey-btn').onclick = async () => {
+      const btn = document.getElementById('passkey-btn');
+      errEl.style.display = 'none';
+      try {
+        btn.disabled = true;
+        btn.textContent = '⏳ Waiting for Face ID...';
+
+        const optRes = await fetch('/admin/passkey/auth-options', { method: 'POST' });
+        if (!optRes.ok) { throw new Error('No passkeys registered yet. Log in with password first.'); }
+        const options = await optRes.json();
+
+        const assertion = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
+
+        const verRes = await fetch('/admin/passkey/auth-verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(assertion)
+        });
+        if (verRes.ok) {
+          window.location.href = '/admin/dashboard';
+        } else {
+          const data = await verRes.json().catch(() => ({}));
+          throw new Error(data.error || 'Passkey verification failed');
+        }
+      } catch (err) {
+        if (err.name !== 'NotAllowedError') showError(err.message);
+        btn.disabled = false;
+        btn.innerHTML = '🔑 Use Passkey (Face ID)';
       }
     };
   </script>
@@ -310,6 +376,7 @@ router.get('/dashboard', auth, (req, res) => {
     <div style="margin-bottom:15px;display:flex;gap:20px;flex-wrap:wrap">
       <a href="/admin/db" style="color:var(--accent);text-decoration:none;font-size:0.9em">📦 Database Browser</a>
       <a href="/admin/backup" style="color:var(--accent);text-decoration:none;font-size:0.9em">💾 Create Backup</a>
+      <a href="/admin/settings" style="color:var(--accent);text-decoration:none;font-size:0.9em">⚙️ Settings</a>
       <a href="/admin/logout" style="color:var(--muted);text-decoration:none;font-size:0.9em">🚪 Logout</a>
     </div>
 
@@ -408,12 +475,13 @@ router.get('/db', auth, (req, res) => {
   const offset = parseInt(req.query.offset) || 0;
   const search = req.query.search || '';
 
-  // Get all tables
+  // Get all tables (hide internal/unused ones)
+  const HIDDEN_TABLES = new Set(['metrics', 'user_prefs']);
   const tables = db.prepare(`
     SELECT name FROM sqlite_master
     WHERE type='table' AND name NOT LIKE 'sqlite_%'
     ORDER BY name
-  `).all().map(t => t.name);
+  `).all().map(t => t.name).filter(t => !HIDDEN_TABLES.has(t));
 
   // Validate table name
   if (!tables.includes(table)) {
@@ -529,6 +597,260 @@ router.get('/db', auth, (req, res) => {
 </body>
 </html>`;
 
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
+});
+
+// ─────────────────────────────────────────────────────────────
+// Passkey: Registration (requires auth — first login with password)
+// ─────────────────────────────────────────────────────────────
+router.get('/passkey/register-options', auth, async (req, res) => {
+  try {
+    const existing = getPasskeyCredentials();
+    const options = await generateRegistrationOptions({
+      rpName: RP_NAME,
+      rpID: RP_ID,
+      userName: 'admin',
+      userID: new Uint8Array(Buffer.from('pp-admin')),
+      attestationType: 'none',
+      excludeCredentials: existing.map(c => ({
+        id: c.credential_id,
+        type: 'public-key',
+        transports: JSON.parse(c.transports || '[]'),
+      })),
+      authenticatorSelection: {
+        residentKey: 'preferred',
+        userVerification: 'preferred',
+      },
+    });
+
+    pendingRegChallenge = { challenge: options.challenge, expiry: Date.now() + CHALLENGE_TTL };
+    res.json(options);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/passkey/register-verify', auth, async (req, res) => {
+  if (!pendingRegChallenge || Date.now() > pendingRegChallenge.expiry) {
+    return res.status(400).json({ error: 'Challenge expired. Try again.' });
+  }
+  try {
+    const verification = await verifyRegistrationResponse({
+      response: req.body,
+      expectedChallenge: pendingRegChallenge.challenge,
+      expectedOrigin: RP_ORIGIN,
+      expectedRPID: RP_ID,
+    });
+
+    if (!verification.verified || !verification.registrationInfo) {
+      return res.status(400).json({ error: 'Verification failed' });
+    }
+
+    const { credential } = verification.registrationInfo;
+    savePasskeyCredential({
+      credentialId: credential.id,
+      publicKey:    Buffer.from(credential.publicKey).toString('base64url'),
+      counter:      credential.counter,
+      transports:   req.body.response?.transports || [],
+      label:        `Passkey ${new Date().toLocaleDateString('uk-UA')}`,
+    });
+
+    pendingRegChallenge = null;
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Passkey: Authentication (public — no auth required)
+// ─────────────────────────────────────────────────────────────
+router.post('/passkey/auth-options', async (req, res) => {
+  const credentials = getPasskeyCredentials();
+  if (!credentials.length) {
+    return res.status(404).json({ error: 'No passkeys registered' });
+  }
+  try {
+    const options = await generateAuthenticationOptions({
+      rpID: RP_ID,
+      allowCredentials: credentials.map(c => ({
+        id: c.credential_id,
+        type: 'public-key',
+        transports: JSON.parse(c.transports || '[]'),
+      })),
+      userVerification: 'preferred',
+    });
+
+    pendingAuthChallenge = { challenge: options.challenge, expiry: Date.now() + CHALLENGE_TTL };
+    res.json(options);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/passkey/auth-verify', async (req, res) => {
+  if (!pendingAuthChallenge || Date.now() > pendingAuthChallenge.expiry) {
+    return res.status(400).json({ error: 'Challenge expired. Try again.' });
+  }
+  const credentials = getPasskeyCredentials();
+  const stored = credentials.find(c => c.credential_id === req.body.id);
+  if (!stored) {
+    return res.status(400).json({ error: 'Unknown passkey' });
+  }
+  try {
+    const verification = await verifyAuthenticationResponse({
+      response: req.body,
+      expectedChallenge: pendingAuthChallenge.challenge,
+      expectedOrigin: RP_ORIGIN,
+      expectedRPID: RP_ID,
+      credential: {
+        id:         stored.credential_id,
+        publicKey:  Buffer.from(stored.public_key, 'base64url'),
+        counter:    stored.counter,
+        transports: JSON.parse(stored.transports || '[]'),
+      },
+    });
+
+    if (!verification.verified) {
+      return res.status(401).json({ error: 'Verification failed' });
+    }
+
+    pendingAuthChallenge = null;
+    updatePasskeyCounter(stored.credential_id, verification.authenticationInfo.newCounter);
+
+    const token = generateToken();
+    res.cookie('admin_token', token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.delete('/passkey/:id', auth, (req, res) => {
+  deletePasskeyCredential(req.params.id);
+  res.json({ success: true });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Settings page — manage passkeys
+// ─────────────────────────────────────────────────────────────
+router.get('/settings', auth, (req, res) => {
+  const credentials = getPasskeyCredentials();
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Admin Settings</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    :root{--bg:#0f0f1a;--card:#1a1a2e;--accent:#667eea;--green:#4ade80;--red:#f87171;--text:#e2e8f0;--muted:#64748b;--border:#2a2a4a}
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);padding:20px}
+    .container{max-width:600px;margin:0 auto}
+    h1{color:var(--accent);margin-bottom:20px}
+    h2{color:var(--accent);margin:20px 0 10px;font-size:1.1em}
+    .card{background:var(--card);padding:20px;border-radius:12px;border:1px solid var(--border);margin-bottom:16px}
+    .back{color:var(--muted);text-decoration:none;font-size:0.9em;display:inline-block;margin-bottom:20px}
+    .back:hover{color:var(--accent)}
+    .btn{padding:12px 20px;border:none;border-radius:8px;cursor:pointer;font-size:0.95em;font-weight:500}
+    .btn-primary{background:var(--accent);color:white}
+    .btn-primary:hover{opacity:0.9}
+    .btn-primary:disabled{opacity:0.5;cursor:not-allowed}
+    .btn-danger{background:rgba(248,113,113,0.2);color:var(--red);border:1px solid rgba(248,113,113,0.3)}
+    .btn-danger:hover{background:rgba(248,113,113,0.35)}
+    .passkey-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)}
+    .passkey-row:last-child{border-bottom:none}
+    .passkey-info{display:flex;flex-direction:column;gap:3px}
+    .passkey-label{font-weight:500}
+    .passkey-date{font-size:0.8em;color:var(--muted)}
+    .msg{margin-top:12px;padding:10px;border-radius:6px;font-size:0.9em;display:none}
+    .msg.ok{background:rgba(74,222,128,0.15);color:var(--green)}
+    .msg.err{background:rgba(248,113,113,0.15);color:var(--red)}
+    .empty{color:var(--muted);font-size:0.9em;padding:12px 0}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a class="back" href="/admin/dashboard">← Back to Dashboard</a>
+    <h1>⚙️ Settings</h1>
+
+    <div class="card">
+      <h2>🔑 Passkeys</h2>
+      <div id="list">
+        ${credentials.length === 0
+          ? '<div class="empty">No passkeys registered yet.</div>'
+          : credentials.map(c => `
+            <div class="passkey-row" id="pk-${c.id}">
+              <div class="passkey-info">
+                <span class="passkey-label">🔑 ${c.label}</span>
+                <span class="passkey-date">Registered: ${c.created_at.slice(0, 16).replace('T', ' ')}</span>
+              </div>
+              <button class="btn btn-danger" onclick="deletePasskey('${c.credential_id}', ${c.id})">Delete</button>
+            </div>`).join('')
+        }
+      </div>
+      <button class="btn btn-primary" id="reg-btn" style="margin-top:16px">+ Register New Passkey</button>
+      <div class="msg" id="msg"></div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/@simplewebauthn/browser@13/dist/bundle/index.umd.min.js"></script>
+  <script>
+    const msgEl = document.getElementById('msg');
+    function showMsg(text, type) {
+      msgEl.textContent = text;
+      msgEl.className = 'msg ' + type;
+      msgEl.style.display = 'block';
+      setTimeout(() => msgEl.style.display = 'none', 4000);
+    }
+
+    document.getElementById('reg-btn').onclick = async () => {
+      const btn = document.getElementById('reg-btn');
+      try {
+        btn.disabled = true;
+        btn.textContent = '⏳ Waiting for Face ID...';
+
+        const optRes = await fetch('/admin/passkey/register-options');
+        const options = await optRes.json();
+
+        const credential = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON: options });
+
+        const verRes = await fetch('/admin/passkey/register-verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(credential)
+        });
+        if (verRes.ok) {
+          showMsg('✅ Passkey registered! Reload to see it.', 'ok');
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          const d = await verRes.json();
+          throw new Error(d.error || 'Failed');
+        }
+      } catch (err) {
+        if (err.name !== 'NotAllowedError') showMsg('❌ ' + err.message, 'err');
+        btn.disabled = false;
+        btn.textContent = '+ Register New Passkey';
+      }
+    };
+
+    async function deletePasskey(credentialId, rowId) {
+      if (!confirm('Delete this passkey?')) return;
+      const res = await fetch('/admin/passkey/' + encodeURIComponent(credentialId), { method: 'DELETE' });
+      if (res.ok) {
+        document.getElementById('pk-' + rowId)?.remove();
+        showMsg('Passkey deleted.', 'ok');
+      }
+    }
+  </script>
+</body>
+</html>`;
   res.setHeader('Content-Type', 'text/html');
   res.send(html);
 });

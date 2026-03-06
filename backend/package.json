@@ -19,7 +19,8 @@
     "luxon": "^3.4.4",
     "better-sqlite3": "^11.0.0",
     "jsonwebtoken": "^9.0.2",
-    "cookie-parser": "^1.4.6"
+    "cookie-parser": "^1.4.6",
+    "@simplewebauthn/server": "^13.0.0"
   },
   "engines": {
     "node": ">=18.0.0"

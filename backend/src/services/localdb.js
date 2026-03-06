@@ -61,17 +61,6 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_paypals_email ON paypals(email);
     CREATE INDEX IF NOT EXISTS idx_transactions_id ON transactions(transaction_id);
 
-    CREATE TABLE IF NOT EXISTS metrics (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      endpoint TEXT NOT NULL,
-      method TEXT,
-      status_code INTEGER,
-      duration_ms REAL,
-      timestamp TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_metrics_endpoint ON metrics(endpoint);
-    CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics(timestamp);
 
     CREATE TABLE IF NOT EXISTS user_prefs (
       tg_id TEXT PRIMARY KEY,
@@ -89,6 +78,16 @@ export function initDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_bot_logs_tg_id ON bot_logs(tg_id);
     CREATE INDEX IF NOT EXISTS idx_bot_logs_created ON bot_logs(created_at);
+
+    CREATE TABLE IF NOT EXISTS passkey_credentials (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      credential_id TEXT UNIQUE NOT NULL,
+      public_key TEXT NOT NULL,
+      counter INTEGER DEFAULT 0,
+      transports TEXT DEFAULT '[]',
+      label TEXT DEFAULT 'Passkey',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 
   // Migrate: add new columns if missing
@@ -111,6 +110,9 @@ export function initDatabase() {
       db.exec(`ALTER TABLE transactions ADD COLUMN ${col} ${type}`);
     }
   }
+
+  // Drop unused tables from previous versions
+  db.exec('DROP TABLE IF EXISTS metrics');
 
   console.log('📦 Local SQLite database initialized');
   return db;
@@ -269,69 +271,6 @@ export function getStats() {
   };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// METRICS
-// ═══════════════════════════════════════════════════════════════
-
-export function logMetric(endpoint, method, statusCode, durationMs) {
-  try {
-    const stmt = getDb().prepare(`
-      INSERT INTO metrics (endpoint, method, status_code, duration_ms)
-      VALUES (?, ?, ?, ?)
-    `);
-    stmt.run(endpoint, method, statusCode, durationMs);
-  } catch (e) {
-    // Ignore metric errors
-  }
-}
-
-export function getMetricsStats() {
-  const db = getDb();
-
-  // Average response times by endpoint (last 24h)
-  const avgTimes = db.prepare(`
-    SELECT
-      endpoint,
-      COUNT(*) as requests,
-      ROUND(AVG(duration_ms), 2) as avg_ms,
-      ROUND(MIN(duration_ms), 2) as min_ms,
-      ROUND(MAX(duration_ms), 2) as max_ms
-    FROM metrics
-    WHERE timestamp > datetime('now', '-24 hours')
-    GROUP BY endpoint
-    ORDER BY requests DESC
-  `).all();
-
-  // Recent requests
-  const recent = db.prepare(`
-    SELECT endpoint, method, status_code, duration_ms, timestamp
-    FROM metrics
-    ORDER BY id DESC
-    LIMIT 20
-  `).all();
-
-  // Total stats
-  const total = db.prepare(`
-    SELECT
-      COUNT(*) as total_requests,
-      ROUND(AVG(duration_ms), 2) as avg_ms
-    FROM metrics
-    WHERE timestamp > datetime('now', '-24 hours')
-  `).get();
-
-  return { avgTimes, recent, total };
-}
-
-// Cleanup old metrics (keep last 7 days)
-export function cleanupMetrics() {
-  try {
-    getDb().prepare(`
-      DELETE FROM metrics WHERE timestamp < datetime('now', '-7 days')
-    `).run();
-  } catch (e) {
-    // Ignore
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════
 // USER PREFERENCES
@@ -399,6 +338,30 @@ export function getPayPalLastUsed(tgId) {
     map.set(row.pp_email.toLowerCase(), row.last_used);
   }
   return map;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PASSKEY CREDENTIALS
+// ═══════════════════════════════════════════════════════════════
+
+export function getPasskeyCredentials() {
+  return getDb().prepare('SELECT * FROM passkey_credentials ORDER BY created_at DESC').all();
+}
+
+export function savePasskeyCredential({ credentialId, publicKey, counter, transports, label }) {
+  getDb().prepare(`
+    INSERT INTO passkey_credentials (credential_id, public_key, counter, transports, label)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(credentialId, publicKey, counter || 0, JSON.stringify(transports || []), label || 'Passkey');
+}
+
+export function updatePasskeyCounter(credentialId, counter) {
+  getDb().prepare('UPDATE passkey_credentials SET counter = ? WHERE credential_id = ?')
+    .run(counter, credentialId);
+}
+
+export function deletePasskeyCredential(credentialId) {
+  getDb().prepare('DELETE FROM passkey_credentials WHERE credential_id = ?').run(credentialId);
 }
 
 // Like getClientPayPals but sorted LRU first (never-used → oldest-used → newest-used)
