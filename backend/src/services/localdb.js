@@ -72,6 +72,23 @@ export function initDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_metrics_endpoint ON metrics(endpoint);
     CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics(timestamp);
+
+    CREATE TABLE IF NOT EXISTS user_prefs (
+      tg_id TEXT PRIMARY KEY,
+      lang TEXT NOT NULL DEFAULT 'en',
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS bot_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tg_id TEXT NOT NULL,
+      username TEXT DEFAULT '',
+      pp_email TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bot_logs_tg_id ON bot_logs(tg_id);
+    CREATE INDEX IF NOT EXISTS idx_bot_logs_created ON bot_logs(created_at);
   `);
 
   // Migrate: add new columns if missing
@@ -314,6 +331,58 @@ export function cleanupMetrics() {
   } catch (e) {
     // Ignore
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// USER PREFERENCES
+// ═══════════════════════════════════════════════════════════════
+
+export function getLang(tgId) {
+  const row = getDb().prepare('SELECT lang FROM user_prefs WHERE tg_id = ?').get(String(tgId));
+  return row?.lang || 'en';
+}
+
+export function setLang(tgId, lang) {
+  getDb().prepare(`
+    INSERT INTO user_prefs (tg_id, lang, updated_at)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(tg_id) DO UPDATE SET lang = excluded.lang, updated_at = excluded.updated_at
+  `).run(String(tgId), lang);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BOT LOGS
+// ═══════════════════════════════════════════════════════════════
+
+export function logPayPalSelected(tgId, username, ppEmail) {
+  try {
+    getDb().prepare(`
+      INSERT INTO bot_logs (tg_id, username, pp_email)
+      VALUES (?, ?, ?)
+    `).run(String(tgId), username || '', ppEmail);
+  } catch (e) {
+    // Never fail on log errors
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CLIENT PAYPALS (filtered by assignment)
+// ═══════════════════════════════════════════════════════════════
+
+export function getClientPayPals(tgId, isAdmin) {
+  const allPaypals = getPayPalsLocal();
+  if (isAdmin) return allPaypals;
+
+  const client = findClientByTgIdLocal(tgId);
+  if (!client || !client.emails) return [];
+
+  const assigned = client.emails
+    .split(',')
+    .map(e => e.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (!assigned.length) return [];
+  return allPaypals.filter(pp => assigned.includes(pp.email.toLowerCase()));
 }
 
 // ═══════════════════════════════════════════════════════════════
