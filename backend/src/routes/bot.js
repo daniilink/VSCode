@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import {
   findClientByTgIdLocal,
-  getClientPayPals,
+  getClientPayPalsSorted,
   logPayPalSelected,
   getLang,
   setLang,
@@ -46,8 +46,8 @@ const T = {
       `When you <b>see the fees</b> on the confirmation screen — tap below.`,
     checkBtn:      '✅ Check (I see fees on PayPal)',
     backBtn:       '← Back',
-    checking:      (ppName) =>
-      `⏳ Checking status for <b>${ppName}</b>...\nWill reply in ~30s. Keep the app open.`,
+    checking:      (ppName, secs) =>
+      `⏳ Checking status for <b>${ppName}</b>...\n${secs} seconds remaining.`,
     ok:            (ppName, ppEmail) =>
       `👌 <b>All clear! You can send.</b>\n\nNo issues detected.\n<b>${ppName}</b> · <code>${ppEmail}</code>`,
     ban:
@@ -70,8 +70,8 @@ const T = {
       `Когда <b>увидите комиссию</b> на экране подтверждения — нажмите ниже.`,
     checkBtn:      '✅ Проверить (вижу комиссию в PayPal)',
     backBtn:       '← Назад',
-    checking:      (ppName) =>
-      `⏳ Проверяю статус <b>${ppName}</b>...\nОтвечу через ~30 сек. Не закрывайте приложение.`,
+    checking:      (ppName, secs) =>
+      `⏳ Проверяю статус <b>${ppName}</b>...\nОсталось ${secs} сек.`,
     ok:            (ppName, ppEmail) =>
       `👌 <b>Всё чисто! Можно отправлять.</b>\n\nПроблем не обнаружено.\n<b>${ppName}</b> · <code>${ppEmail}</code>`,
     ban:
@@ -97,7 +97,7 @@ function buildPpKeyboard(paypals) {
 
 async function showPayPalList(chatId, msgId, tgId, isAdmin, lang) {
   const client = findClientByTgIdLocal(tgId);
-  const paypals = getClientPayPals(tgId, isAdmin);
+  const paypals = getClientPayPalsSorted(tgId, isAdmin);
 
   if (!paypals.length) {
     await editMessageText(chatId, msgId, t(lang).noPaypals, { reply_markup: { inline_keyboard: [] } });
@@ -199,7 +199,7 @@ async function handleCallback(cb) {
   if (data.startsWith('pp:')) {
     const ppEmail = data.slice(3);
     const lang    = getLang(tgId);
-    const paypals = getClientPayPals(tgId, isAdmin);
+    const paypals = getClientPayPalsSorted(tgId, isAdmin);
     const pp      = paypals.find(p => p.email === ppEmail);
     if (!pp) return; // tampered data or stale session
 
@@ -230,10 +230,10 @@ async function handleCallback(cb) {
   // ── Check pressed ──────────────────────────────────────────
   if (data === 'check') {
     const session = pendingSessions.get(tgId);
-    const lang    = getLang(tgId);
 
     if (!session || Date.now() - session.createdAt > SESSION_TTL_MS) {
       pendingSessions.delete(tgId);
+      const lang = getLang(tgId);
       await editMessageText(chatId, msgId, t(lang).sessionExpired, { reply_markup: { inline_keyboard: [] } });
       return;
     }
@@ -242,30 +242,53 @@ async function handleCallback(cb) {
     if (session.checking) return;
 
     session.checking = true;
+    const lang = session.lang;
 
-    await editMessageText(chatId, msgId, t(session.lang).checking(session.ppName), {
+    // Notify admin silently (skip if admin is the one checking)
+    if (tgId !== ADMIN_TG_ID) {
+      const who = cb.from.username ? `@${cb.from.username}` : `#${tgId}`;
+      sendMessage(ADMIN_TG_ID,
+        `🔔 ${who} → <b>${session.ppName}</b>`,
+        { disable_notification: true }
+      ).catch(() => {});
+    }
+
+    // Show initial countdown
+    let remaining = CHECK_DELAY_MS / 1000;
+    await editMessageText(chatId, msgId, t(lang).checking(session.ppName, remaining), {
       reply_markup: { inline_keyboard: [] },
     });
 
+    // Update countdown every 5 seconds
+    const countdownInterval = setInterval(async () => {
+      remaining -= 5;
+      if (remaining > 0) {
+        editMessageText(chatId, msgId, t(lang).checking(session.ppName, remaining), {
+          reply_markup: { inline_keyboard: [] },
+        }).catch(() => {});
+      }
+    }, 5000);
+
     setTimeout(async () => {
+      clearInterval(countdownInterval);
       try {
         const status = await checkGmailStatus();
         pendingSessions.delete(tgId);
 
         let resultMsg;
         if (status.ban) {
-          resultMsg = t(session.lang).ban;
+          resultMsg = t(lang).ban;
         } else if (status.action) {
-          resultMsg = t(session.lang).action;
+          resultMsg = t(lang).action;
         } else {
-          resultMsg = t(session.lang).ok(session.ppName, session.ppEmail);
+          resultMsg = t(lang).ok(session.ppName, session.ppEmail);
         }
 
         await sendMessage(chatId, resultMsg);
       } catch (err) {
         console.error('[Bot] Gmail check error:', err.message);
         pendingSessions.delete(tgId);
-        await sendMessage(chatId, t(session.lang).error);
+        await sendMessage(chatId, t(lang).error);
       }
     }, CHECK_DELAY_MS);
   }

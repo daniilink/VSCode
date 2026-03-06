@@ -385,6 +385,35 @@ export function getClientPayPals(tgId, isAdmin) {
   return allPaypals.filter(pp => assigned.includes(pp.email.toLowerCase()));
 }
 
+// Returns Map<ppEmail, lastUsedISO> for a given tgId (from bot_logs)
+export function getPayPalLastUsed(tgId) {
+  const rows = getDb().prepare(`
+    SELECT pp_email, MAX(created_at) as last_used
+    FROM bot_logs
+    WHERE tg_id = ?
+    GROUP BY pp_email
+  `).all(String(tgId));
+
+  const map = new Map();
+  for (const row of rows) {
+    map.set(row.pp_email.toLowerCase(), row.last_used);
+  }
+  return map;
+}
+
+// Like getClientPayPals but sorted LRU first (never-used → oldest-used → newest-used)
+export function getClientPayPalsSorted(tgId, isAdmin) {
+  const paypals = getClientPayPals(tgId, isAdmin);
+  if (paypals.length <= 1) return paypals;
+
+  const lastUsed = getPayPalLastUsed(tgId);
+  return [...paypals].sort((a, b) => {
+    const aUsed = lastUsed.get(a.email.toLowerCase()) || '0';
+    const bUsed = lastUsed.get(b.email.toLowerCase()) || '0';
+    return aUsed.localeCompare(bUsed); // '0' < ISO date; older date < newer date
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════
 // SYNC FROM SUPABASE
 // ═══════════════════════════════════════════════════════════════
